@@ -1,5 +1,4 @@
-# src/preprocess.py — Tiền xử lý dùng chung | Người phụ trách: Hoàng
-
+# src/preprocess.py — Shared preprocessing module
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -15,18 +14,22 @@ FEATURE_COLS = ['step','type_encoded','amount',
 TARGET_COL = 'isFraud'
 
 
-# ------------------------------------------------------------------
-# BƯỚC 1 — Feature Engineering
-# ------------------------------------------------------------------
+
+# STEP 1 — Feature Engineering
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Tạo feature mới từ insight EDA:
-    - errorBalanceOrig : oldbalanceOrg - amount - newbalanceOrig
-                         Nếu != 0 → tín hiệu gian lận rất mạnh
-    - errorBalanceDest : oldbalanceDest + amount - newbalanceDest
-    - type_encoded     : mã hoá cột 'type' thành số
+    Create new features based on EDA insights:
 
-    Bỏ: isFlaggedFraud (tương quan thấp), type (đã encode)
+    - errorBalanceOrig: oldbalanceOrg - amount - newbalanceOrig
+    If the value is not equal to 0, it is a strong indicator of fraud.
+
+    - errorBalanceDest: oldbalanceDest + amount - newbalanceDest
+
+    - type_encoded: numerical encoding of the 'type' column
+
+    Drop:
+    - isFlaggedFraud (low correlation with the target)
+    - type (already encoded)
     """
     df = df.copy()
     df['errorBalanceOrig'] = df['oldbalanceOrg'] - df['amount'] - df['newbalanceOrig']
@@ -37,31 +40,28 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ------------------------------------------------------------------
-# BƯỚC 2 — Lọc transaction type
-# ------------------------------------------------------------------
+
+# STEP 2 — Filter Transaction Types
 def filter_fraud_types(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Chỉ giữ TRANSFER (4) và CASH_OUT (1) vì theo EDA,
-    100% gian lận chỉ xảy ra ở 2 loại này → giảm noise.
+    Keep only TRANSFER (4) and CASH_OUT (1) because, according to the EDA,
+    100% of fraudulent transactions occur only in these two types → reduce noise.
     """
-    fraud_type_codes = [1, 4]  # CASH_OUT=1, TRANSFER=4 (sau LabelEncoder)
+    fraud_type_codes = [1, 4]  # CASH_OUT=1, TRANSFER=4 (after LabelEncoder)
     out = df[df['type_encoded'].isin(fraud_type_codes)].copy()
-    print(f"✅ Sau lọc type: {len(out):,} / {len(df):,} rows")
+    print(f"✅ After type filtering: {len(out):,} / {len(df):,} rows")
     return out
 
 
-# ------------------------------------------------------------------
-# BƯỚC 3 — Tách X/y + Train-Test Split (stratified)
-# ------------------------------------------------------------------
+# STEP 3 — Split X/y + Train-Test Split (Stratified)
 def split_features_target(df):
     return df[FEATURE_COLS], df[TARGET_COL]
 
 
 def split_train_test(X, y, test_size=0.2, random_state=42):
     """
-    Phân chia stratified — giữ tỷ lệ fraud trong cả 2 tập.
-    QUAN TRỌNG: luôn dùng stratify=y khi dữ liệu imbalanced.
+    Perform a stratified split — preserve the fraud ratio in both datasets.
+    IMPORTANT: always use stratify=y when working with imbalanced data.
     """
     X_tr, X_te, y_tr, y_te = train_test_split(
         X, y, test_size=test_size, stratify=y, random_state=random_state
@@ -71,38 +71,35 @@ def split_train_test(X, y, test_size=0.2, random_state=42):
     return X_tr, X_te, y_tr, y_te
 
 
-# ------------------------------------------------------------------
 # BƯỚC 4 — SMOTE + UnderSampling
-# ------------------------------------------------------------------
 def apply_smote(X_train, y_train, sampling_strategy=0.1, random_state=42):
     """
-    SMOTE → tăng minority class (fraud) lên sampling_strategy * majority
-    RandomUnderSampler → giảm majority class → tránh tập train quá lớn
+    SMOTE → increase minority class (fraud) up to sampling_strategy * majority
+    RandomUnderSampler → reduce majority class → prevent an overly large training set
 
-    QUAN TRỌNG: chỉ áp dụng trên TRAIN, KHÔNG dùng trên test set!
-    Áp dụng trên test set = data leakage → kết quả ảo.
+    IMPORTANT: apply ONLY on TRAIN data, NEVER on the test set!
+    Applying it on the test set causes data leakage → artificially inflated results.
     """
     pipeline = ImbPipeline([
         ('over',  SMOTE(sampling_strategy=sampling_strategy, random_state=random_state)),
         ('under', RandomUnderSampler(sampling_strategy=0.5,  random_state=random_state)),
     ])
     X_res, y_res = pipeline.fit_resample(X_train, y_train)
-    print(f"✅ Sau SMOTE: Non-fraud {(y_res==0).sum():,} | Fraud {(y_res==1).sum():,} "
+    print(f"✅ After SMOTE: Non-fraud {(y_res==0).sum():,} | Fraud {(y_res==1).sum():,} "
           f"({y_res.mean()*100:.2f}%)")
     return X_res, y_res
 
 
-# ------------------------------------------------------------------
-# PIPELINE TỔNG HỢP
-# ------------------------------------------------------------------
+
+# COMPLETE PIPELINE
 def preprocess_pipeline(df, filter_types=True, apply_resampling=True,
                          test_size=0.2, random_state=42):
     """
-    Chạy toàn bộ pipeline tiền xử lý:
-    1. Feature Engineering
-    2. (tuỳ chọn) Lọc TRANSFER & CASH_OUT
-    3. Train-Test Split stratified
-    4. (tuỳ chọn) SMOTE trên tập train
+    Run the full preprocessing pipeline:
+    1. Feature engineering
+    2. (optional) Filter TRANSFER & CASH_OUT transactions
+    3. Stratified train-test split
+    4. (optional) SMOTE on the training set
 
     Returns dict: {X_train, X_test, y_train, y_test}
     """
@@ -114,5 +111,5 @@ def preprocess_pipeline(df, filter_types=True, apply_resampling=True,
     X_train, X_test, y_train, y_test = split_train_test(X, y, test_size, random_state)
     if apply_resampling:
         X_train, y_train = apply_smote(X_train, y_train, random_state=random_state)
-    print("✅ Pipeline hoàn tất!\n")
+    print("✅ Pipeline completed!\n")
     return dict(X_train=X_train, X_test=X_test, y_train=y_train, y_test=y_test)

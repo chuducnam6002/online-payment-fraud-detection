@@ -1,4 +1,4 @@
-# src/models.py — Định nghĩa model, train, evaluate | Người phụ trách: Quyết
+# src/models.py — Define model, training, and evaluation
 
 import os, joblib
 import numpy as np
@@ -16,24 +16,22 @@ MODELS_DIR  = os.path.join(os.path.dirname(__file__), '..', 'models')
 FIGURES_DIR = os.path.join(os.path.dirname(__file__), '..', 'reports', 'figures')
 
 
-# ------------------------------------------------------------------
-# ĐỊNH NGHĨA CÁC MÔ HÌNH
-# ------------------------------------------------------------------
+# MODEL DEFINITIONS
 def get_model(model_name: str, random_state=42):
     """
-    Trả về model object theo tên.
-    Các lựa chọn: 'xgboost', 'random_forest', 'logistic_regression'
+    Return a model object based on name.
+    Options: 'xgboost', 'random_forest', 'logistic_regression'
 
-    Tham số đã được tinh chỉnh cho bài toán fraud detection:
-    - XGBoost: scale_pos_weight=100 để xử lý thêm imbalance
+    Parameters are tuned for fraud detection:
+    - XGBoost: scale_pos_weight=100 to further handle imbalance
     - RF/LR: class_weight='balanced'
     """
     models = {
         'xgboost': XGBClassifier(
             n_estimators=300, max_depth=6, learning_rate=0.1,
             subsample=0.8, colsample_bytree=0.8,
-            scale_pos_weight=100,   # weight cho minority class
-            eval_metric='aucpr',    # PR-AUC tốt hơn accuracy cho imbalanced
+            scale_pos_weight=100,   # weight for minority class
+            eval_metric='aucpr',    # PR-AUC better than accuracy for imbalanced data
             random_state=random_state, n_jobs=-1,
         ),
         'random_forest': RandomForestClassifier(
@@ -46,66 +44,68 @@ def get_model(model_name: str, random_state=42):
             random_state=random_state, n_jobs=-1,
         ),
     }
+
     if model_name not in models:
-        raise ValueError(f"Model '{model_name}' không hợp lệ. Chọn: {list(models)}")
+        raise ValueError(f"Invalid model '{model_name}'. Choose from: {list(models)}")
+
     return models[model_name]
 
 
-# ------------------------------------------------------------------
 # TRAIN & SAVE
-# ------------------------------------------------------------------
 def train_model(model_name, X_train, y_train, save=True, random_state=42):
     """
-    Train model và lưu vào models/<model_name>.joblib.
-    Sau khi train, dùng load_model() để load lại mà không cần train lại.
+    Train a model and save it to models/<model_name>.joblib.
+    After training, use load_model() to reload without retraining.
     """
     print(f"🚀 Training {model_name}...")
     model = get_model(model_name, random_state)
     model.fit(X_train, y_train)
     print(f"✅ Done!")
+
     if save:
         os.makedirs(MODELS_DIR, exist_ok=True)
         path = os.path.join(MODELS_DIR, f'{model_name}.joblib')
         joblib.dump(model, path)
         print(f"   💾 Saved: {path}")
+
     return model
 
 
 def load_model(model_name):
-    """Load model đã train từ disk."""
+    """Load a trained model from disk."""
     path = os.path.join(MODELS_DIR, f'{model_name}.joblib')
     if not os.path.exists(path):
-        raise FileNotFoundError(f"Chưa có '{model_name}' — chạy train_model() trước.")
+        raise FileNotFoundError(f"'{model_name}' not found — please run train_model() first.")
     return joblib.load(path)
 
 
-# ------------------------------------------------------------------
-# ĐÁNH GIÁ
-# ------------------------------------------------------------------
+
+# EVALUATION
 def evaluate_model(model, X_test, y_test, model_name='model', save_figures=True):
     """
-    Đánh giá model với metrics phù hợp cho imbalanced classification:
-    - Classification Report (Precision, Recall, F1 cho từng class)
-    - PR-AUC ← METRIC CHÍNH (tốt hơn ROC-AUC khi dữ liệu lệch)
+    Evaluate model using metrics suitable for imbalanced classification:
+    - Classification Report (Precision, Recall, F1 per class)
+    - PR-AUC ← MAIN METRIC (better than ROC-AUC for imbalanced data)
     - ROC-AUC
     - Confusion Matrix, ROC Curve, PR Curve
 
-    Trong fraud detection: ưu tiên Recall của class Fraud cao
-    (bắt được nhiều fraud) và Precision hợp lý (tránh false alarm).
+    In fraud detection: prioritize high Recall for Fraud class
+    (catch more fraud) and reasonable Precision (avoid false alarms).
 
     Returns dict {model_name, roc_auc, pr_auc, f1_score}
     """
     y_pred      = model.predict(X_test)
     y_pred_prob = model.predict_proba(X_test)[:, 1]
 
-    print(f"\n{'='*50}\nĐÁNH GIÁ: {model_name.upper()}\n{'='*50}")
+    print(f"\n{'='*50}\nEVALUATION: {model_name.upper()}\n{'='*50}")
     print(classification_report(y_test, y_pred, target_names=['Legitimate','Fraud']))
 
     roc_auc = roc_auc_score(y_test, y_pred_prob)
     pr_auc  = average_precision_score(y_test, y_pred_prob)
     f1      = f1_score(y_test, y_pred)
+
     print(f"ROC-AUC : {roc_auc:.4f}")
-    print(f"PR-AUC  : {pr_auc:.4f}  ← dùng cái này cho imbalanced data")
+    print(f"PR-AUC  : {pr_auc:.4f}  ← preferred metric for imbalanced data")
     print(f"F1-Score: {f1:.4f}")
 
     os.makedirs(FIGURES_DIR, exist_ok=True)
@@ -117,37 +117,63 @@ def evaluate_model(model, X_test, y_test, model_name='model', save_figures=True)
 
 def _plot_confusion_matrix(y_test, y_pred, name, save):
     fig, ax = plt.subplots(figsize=(6,5))
-    sns.heatmap(confusion_matrix(y_test, y_pred), annot=True, fmt='d', cmap='Blues',
-                xticklabels=['Legitimate','Fraud'],
-                yticklabels=['Legitimate','Fraud'], ax=ax)
-    ax.set(title=f'Confusion Matrix — {name}', ylabel='Actual', xlabel='Predicted')
+    sns.heatmap(
+        confusion_matrix(y_test, y_pred),
+        annot=True, fmt='d', cmap='Blues',
+        xticklabels=['Legitimate','Fraud'],
+        yticklabels=['Legitimate','Fraud'],
+        ax=ax
+    )
+    ax.set(
+        title=f'Confusion Matrix — {name}',
+        ylabel='Actual',
+        xlabel='Predicted'
+    )
     plt.tight_layout()
+
     if save:
         p = os.path.join(FIGURES_DIR, f'confusion_matrix_{name}.png')
-        plt.savefig(p, dpi=150); print(f"   📸 {p}")
+        plt.savefig(p, dpi=150)
+        print(f"   📸 {p}")
+
     plt.show()
 
 
 def _plot_roc_pr(y_test, y_prob, name, roc_auc, pr_auc, save):
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
     fpr, tpr, _ = roc_curve(y_test, y_prob)
     axes[0].plot(fpr, tpr, color='darkorange', lw=2, label=f'AUC={roc_auc:.3f}')
-    axes[0].plot([0,1],[0,1],'k--'); axes[0].set(xlabel='FPR', ylabel='TPR',
-        title=f'ROC Curve — {name}'); axes[0].legend()
+    axes[0].plot([0,1],[0,1],'k--')
+    axes[0].set(
+        xlabel='False Positive Rate',
+        ylabel='True Positive Rate',
+        title=f'ROC Curve — {name}'
+    )
+    axes[0].legend()
+
     prec, rec, _ = precision_recall_curve(y_test, y_prob)
     axes[1].plot(rec, prec, color='steelblue', lw=2, label=f'AP={pr_auc:.3f}')
-    axes[1].set(xlabel='Recall', ylabel='Precision',
-        title=f'PR Curve — {name}'); axes[1].legend()
+    axes[1].set(
+        xlabel='Recall',
+        ylabel='Precision',
+        title=f'PR Curve — {name}'
+    )
+    axes[1].legend()
+
     plt.tight_layout()
+
     if save:
         p = os.path.join(FIGURES_DIR, f'roc_pr_{name}.png')
-        plt.savefig(p, dpi=150); print(f"   📸 {p}")
+        plt.savefig(p, dpi=150)
+        print(f"   📸 {p}")
+
     plt.show()
 
 
 def compare_models(results: list) -> pd.DataFrame:
     """
-    So sánh kết quả nhiều model, sắp xếp theo PR-AUC giảm dần.
+    Compare multiple models and sort by PR-AUC descending.
 
     Example
     -------
@@ -156,5 +182,5 @@ def compare_models(results: list) -> pd.DataFrame:
     >>> compare_models([r1, r2])
     """
     df = pd.DataFrame(results).set_index('model_name').sort_values('pr_auc', ascending=False)
-    print("\n📋 So sánh:\n", df.to_string())
+    print("\n📋 Model comparison:\n", df.to_string())
     return df
